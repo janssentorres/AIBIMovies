@@ -1,21 +1,26 @@
 using Microsoft.EntityFrameworkCore;
-using MvcMovie.Models;
+//using MvcMovie.Models; //This is for the SeedData.cs
+using MvcMovie.Services; //This is for the New Movie Seeder
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("MvcMovieContext") ?? throw new InvalidOperationException("Connection string 'MvcMovieContext' not found.");
 
 builder.Services.AddDbContext<MvcMovieContext>(options => options.UseSqlServer(connectionString));
 
-// Add services to the container.
+builder.Services.AddScoped<IMovieSeedService, MovieSeedService>();
+
 builder.Services.AddControllersWithViews();
 
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var services = scope.ServiceProvider;
+    //SeedData Initializer
+    //var services = scope.ServiceProvider;
+    //SeedData.Initialize(services); 
 
-    SeedData.Initialize(services);
+    var seedService = scope.ServiceProvider.GetRequiredService<IMovieSeedService>();
+    await seedService.SeedAsync();
 }
 
 // Configure the HTTP request pipeline.
@@ -37,6 +42,5 @@ app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}")
     .WithStaticAssets();
-
 
 app.Run();

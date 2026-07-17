@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using MvcMovie.Models;
 
+namespace MvcMovie.Controllers;
+
 public class MoviesController : Controller
 {
     private readonly MvcMovieContext _context;
@@ -13,44 +15,99 @@ public class MoviesController : Controller
         _context = context;
     }
 
-    // GET: Movies
-    public async Task<IActionResult> Index(string movieGenre, string searchString)
+    public async Task<IActionResult> Index(string? movieGenre, string? searchString, DateTime? releaseDateFrom, DateTime? releaseDateTo,
+        string sortBy = "Title", string sortDirection = "asc", int pageNumber = 1, int pageSize = 10)
     {
-        if (_context.Movie == null)
+        pageNumber = Math.Max(pageNumber, 1);
+        pageSize = Math.Clamp(pageSize, 10, 200);
+
+        var genreQuery = _context.Movie
+            .Select(movie => movie.Genre)
+            .Distinct()
+            .OrderBy(genre => genre);
+
+        var movies = _context.Movie.AsNoTracking().AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(searchString))
         {
-            return Problem("Entity set 'MvcMovieContext.Movie'  is null.");
+            movies = movies.Where(movie => movie.Title.Contains(searchString));
         }
 
-        // Use LINQ to get list of genres.
-        IQueryable<string> genreQuery = from m in _context.Movie
-                                        orderby m.Genre
-                                        select m.Genre;
-        var movies = from m in _context.Movie
-                     select m;
-
-        if (!string.IsNullOrEmpty(searchString))
+        if (!string.IsNullOrWhiteSpace(movieGenre))
         {
-            movies = movies.Where(s => s.Title!.ToUpper().Contains(searchString.ToUpper()));
+            movies = movies.Where(movie =>
+                movie.Genre == movieGenre);
         }
 
-        if (!string.IsNullOrEmpty(movieGenre))
+        if (releaseDateFrom.HasValue)
         {
-            movies = movies.Where(x => x.Genre == movieGenre);
+            movies = movies.Where(movie =>
+                movie.ReleaseDate >= releaseDateFrom.Value);
         }
 
-        var movieGenreVM = new MovieGenreViewModel
+        if (releaseDateTo.HasValue)
         {
-            Genres = new SelectList(await genreQuery.Distinct().ToListAsync()),
-            Movies = await movies.ToListAsync()
+            movies = movies.Where(movie =>
+                movie.ReleaseDate <= releaseDateTo.Value);
+        }
+
+        movies = sortBy switch
+        {
+            "Genre" when sortDirection == "desc" =>
+                movies.OrderByDescending(movie => movie.Genre).ThenBy(movie => movie.Id),
+
+            "Genre" => movies.OrderBy(movie => movie.Genre).ThenBy(movie => movie.Id),
+
+            "ReleaseDate" when sortDirection == "desc" =>
+                movies.OrderByDescending(movie => movie.ReleaseDate).ThenBy(movie => movie.Id),
+
+            "ReleaseDate" =>
+                movies.OrderBy(movie => movie.ReleaseDate).ThenBy(movie => movie.Id),
+
+            "Title" when sortDirection == "desc" =>
+                movies.OrderByDescending(movie => movie.Title).ThenBy(movie => movie.Id),
+
+            _ =>
+                movies.OrderBy(movie => movie.Title).ThenBy(movie => movie.Id)
         };
 
-        return View(movieGenreVM);
-    }
+        var totalRecords = await movies.CountAsync();
 
-    [HttpPost]
-    public string Index(string searchString, bool notUsed)
-    {
-        return "From [HttpPost]Index: filter on " + searchString;
+        var totalPages = (int)Math.Ceiling(
+            totalRecords / (double)pageSize);
+
+        if (totalPages > 0)
+        {
+            pageNumber = Math.Min(pageNumber, totalPages);
+        }
+        else
+        {
+            pageNumber = 1;
+        }
+
+        var movieList = await movies
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        var genres = await genreQuery.ToListAsync();
+
+        var viewModel = new MovieGenreViewModel
+        {
+            Movies = movieList,
+            Genres = new SelectList(genres, selectedValue: movieGenre),
+            MovieGenre = movieGenre,
+            SearchString = searchString,
+            ReleaseDateFrom = releaseDateFrom,
+            ReleaseDateTo = releaseDateTo,
+            SortBy = sortBy,
+            SortDirection = sortDirection,
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            TotalRecords = totalRecords
+        };
+
+        return View(viewModel);
     }
 
     // GET: MOVIES/Details/5
